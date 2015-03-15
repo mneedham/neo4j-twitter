@@ -1,0 +1,69 @@
+= Twitter Followers Recommendation Graph
+
+This project lets you build your own Neo4j graph of Twitter data and makes recommendations about who you should follow.
+
+== Getting started
+
+Setup a virtualenv sandbox and activate it:
+
+```
+virtualenv twitter
+source twitter/bin/activate
+```
+
+Import the required libraries:
+
+```
+pip install -r requirements.txt
+```
+
+```
+cp credentials.local.template credentials.local
+```
+
+link:https://apps.twitter.com/[Create a Twitter app] and populate `credentials.local` with your credentials.
+
+Run the following command to have them set as environment variables.
+
+```
+source credentials.local
+```
+
+We make use of Prismatic's Interest Graph to extract topics from shared links which adds a layer to our recommendations
+
+== Seed
+
+Pick a user to create out initial graph from.
+We'll go out from this user, look at who they interact with and download the tweets of a specified number of users
+
+e.g. we'll download 50 users who have interacted with link:http://www.twitter.com/chvest[Chris Vest] and his connections.
+
+```
+python twitter.py --seed chvest
+```
+
+After we've run the seed command we'll have a set of twitter users in link:data/users.csv[data/users.csv] whose tweets we need to download.
+
+```
+python twitter.py --download-all-tweets
+```
+
+== Import into Neo4j
+
+First you need to link:http://neo4j.com/download/[download Neo4j] and start it up on its default port `7474`.
+
+```
+cd /path/to/neo4j
+./bin/neo4j start
+```
+
+After you've done that it's time to import all our Twitter data.
+This is split into two steps in case you want to run one part more frequently.
+
+```
+python twitter.py --import-profiles-into-neo4j
+python twitter.py --import-tweets-into-neo4j
+```
+
+== Next
+* Adding topics - for this we'll make use of Prismatic's interest graph.

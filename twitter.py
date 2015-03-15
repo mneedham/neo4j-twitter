@@ -4,9 +4,12 @@ import os
 import tweepy
 import csv
 import json
+import calendar
 
 from collections import  deque
 from util import Users
+from py2neo import Graph
+from dateutil import parser
 
 def seed(api, username):
     if os.path.exists("data/users.csv"):
@@ -120,6 +123,89 @@ def download_profile(api, username):
     with open("data/profiles/{0}.json".format(username), "w") as file:
         file.write(json.dumps(profile))
 
+def import_profiles_into_neo4j():
+    graph = Graph()
+
+    tx = graph.cypher.begin()
+    files = [file for file in os.listdir("data/profiles") if file.endswith("json")]
+    for file in files:
+        with open("data/profiles/{0}".format(file), "r") as file:
+            profile = json.loads(file.read())
+            print profile["screen_name"]
+
+            params = {
+                "twitterId" : profile["id"],
+                "screenName": profile["screen_name"],
+                "name": profile["name"],
+                "description": profile["description"],
+                "followers" : profile["followers"],
+                "friends" : profile["friends"]
+            }
+            statement = """
+                        MERGE (p:Person {twitterId: {twitterId}})
+                        REMOVE p:Shadow
+                        SET p.screenName = {screenName},
+                            p.description = {description},
+                            p.name = {name}
+                        WITH p
+
+                        FOREACH(followerId IN {followers} |
+                          MERGE (follower:Person {twitterId: followerId})
+                          ON CREATE SET follower:Shadow
+                          MERGE (follower)-[:FOLLOWS]->(p)
+                        )
+
+                        FOREACH(friendId IN {friends} |
+                          MERGE (friend:Person {twitterId: friendId})
+                          ON CREATE SET friend:Shadow
+                          MERGE (p)-[:FOLLOWS]->(friend)
+                        )
+                        """
+            tx.append(statement, params)
+
+            tx.process()
+    tx.commit()
+
+def import_tweets_into_neo4j():
+    graph = Graph()
+
+    tx = graph.cypher.begin()
+    count = 0
+
+    files = [file for file in os.listdir("data/tweets") if file.endswith("json")]
+    for file in files:
+        with open("data/tweets/{0}".format(file), "r") as file:
+            tweets = json.loads(file.read())
+
+            for tweet in tweets:
+                created_at = calendar.timegm(parser.parse(tweet["created_at"]).timetuple())
+
+                params = {
+                    "tweetId": tweet["id"],
+                    "createdAt": created_at,
+                    "text": tweet["text"],
+                    "userId": tweet["user"]["id"],
+                    "userMentions": [user for user in tweet["entities"]["user_mentions"]]
+                }
+
+                statement = """
+                            MERGE (tweet:Tweet {id: {tweetId}})
+                            SET tweet.text = {text}, tweet.timestamp = {createdAt}
+                            WITH tweet
+                            MATCH (person:Person {twitterId: {userId}})
+                            MERGE (person)-[:TWEETED]->(tweet)
+                            WITH tweet
+
+                            FOREACH(user in {userMentions} |
+                                MERGE (mentionedUser:Person {twitterId: user.id})
+                                SET mentionedUser.screenName = user.screen_name
+                                MERGE (tweet)-[:MENTIONED_USER]->(mentionedUser)
+                            )
+                            """
+                tx.append(statement, params)
+                tx.process()
+    tx.commit()
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Query the Twitter API')
 
@@ -132,6 +218,13 @@ def main(argv=None):
     # all users
     parser.add_argument('--download-all-tweets', action='store_true')
     parser.add_argument('--download-all-profiles', action='store_true')
+
+    # twitter auth
+    parser.add_argument('--check-auth', action='store_true')
+
+    # import
+    parser.add_argument('--import-profiles-into-neo4j', action='store_true')
+    parser.add_argument('--import-tweets-into-neo4j', action='store_true')
 
     if argv is None:
         argv = sys.argv
@@ -152,9 +245,27 @@ def main(argv=None):
         print "One of your twitter keys isn't set - don't forget to 'source credentials.local'"
         sys.exit(1)
 
+    if args.check_auth:
+        print "consumer_key: {0}".format(consumer_key)
+        print "consumer_secret: {0}".format(consumer_secret)
+        print "access_token: {0}".format(access_token)
+        print "access_token_secret: {0}".format(access_token_secret)
+
+        try:
+            auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
+            auth.set_access_token(access_token, access_token_secret)
+            api = tweepy.API(auth, wait_on_rate_limit = True, wait_on_rate_limit_notify = True)
+            api.verify_credentials()
+            print "Auth all working - we're good to go!"
+        except tweepy.TweepError as e:
+            print "Auth problem - " + str(e)
+
+        return
+
     auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
     auth.set_access_token(access_token, access_token_secret)
     api = tweepy.API(auth, wait_on_rate_limit = True, wait_on_rate_limit_notify = True)
+    api.verify_credentials()
 
     if args.seed:
         seed(api, args.seed)
@@ -178,6 +289,14 @@ def main(argv=None):
     if args.download_all_profiles:
         users = Users()
         download_all_user_profiles(api, users)
+        return
+
+    if args.import_profiles_into_neo4j:
+        import_profiles_into_neo4j()
+        return
+
+    if args.import_tweets_into_neo4j:
+        import_tweets_into_neo4j()
         return
 
 if __name__ == "__main__":
