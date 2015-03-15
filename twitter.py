@@ -64,16 +64,35 @@ def seed(api, username):
             writer.writerow([user, "", ""])
 
 def read_user(api, username):
-    with open("data/tweets/{0}.csv".format(username), "r") as file:
-        tweets = json.loads(file.read())
+    print username
+    profile_file_path = "data/profiles/{0}.json".format(username)
+    if os.path.exists(profile_file_path):
+        with open(profile_file_path, "r") as file:
+            profile = json.loads(file.read())
+            print profile["name"]
+            print profile["description"]
+            print "Friends: {0}".format(len(profile["friends"]))
+            print "Followers: {0}".format(len(profile["followers"]))
+
+    file_path = "data/tweets/{0}.json".format(username)
+
+    if not os.path.exists(file_path):
+        tweets = []
+    else:
+        with open(file_path, "r") as file:
+            tweets = json.loads(file.read())
+
     print "# of tweets: {0}".format(len(tweets))
-    print "latest ids: " + str([tweet["id"] for tweet in tweets][:5])
+    if len(tweets) > 0:
+        print "latest tweets:"
+        for tweet in tweets[:5]:
+            print tweet["id"], tweet["text"]
 
 def download_user_tweets(api, users, username):
     print username
     value = users.find(username)
 
-    file_path = "data/tweets/{0}.csv".format(username)
+    file_path = "data/tweets/{0}.json".format(username)
     if os.path.exists(file_path):
         with open(file_path, "r") as file:
             tweets =  json.loads(file.read())
@@ -82,7 +101,7 @@ def download_user_tweets(api, users, username):
 
     first_tweet_done = False
     since_id = value["lastTweetRetrieved"]
-    for tweet in tweepy.Cursor(api.user_timeline, id=username, since_id = since_id).items(2):
+    for tweet in tweepy.Cursor(api.user_timeline, id=username, since_id = since_id).items(50):
         print tweet.id
         if not first_tweet_done:
             value["lastTweetRetrieved"] = tweet.id
@@ -91,8 +110,21 @@ def download_user_tweets(api, users, username):
 
     users.save(username, value)
 
-    with open("data/tweets/{0}.csv".format(username), "w") as file:
+    with open("data/tweets/{0}.json".format(username), "w") as file:
         file.write(json.dumps(tweets))
+
+def download_profile(api, username):
+    print username
+
+    profile = api.get_user(username)._json
+    followers = list(tweepy.Cursor(api.followers_ids, username).items())
+    friends = list(tweepy.Cursor(api.friends_ids, username).items())
+
+    profile["followers"] =  followers
+    profile["friends"] =  friends
+
+    with open("data/profiles/{0}.json".format(username), "w") as file:
+        file.write(json.dumps(profile))
 
 def main(argv=None):
     consumer_key =  os.environ['CONSUMER_KEY']
@@ -106,7 +138,8 @@ def main(argv=None):
 
     parser = argparse.ArgumentParser(description='Query the Twitter API')
     parser.add_argument('--seed')
-    parser.add_argument('--download-user')
+    parser.add_argument('--download-tweets')
+    parser.add_argument('--download-profile')
     parser.add_argument('--read-user')
 
     if argv is None:
@@ -117,13 +150,16 @@ def main(argv=None):
     if args.seed:
         seed(api, args.seed)
 
-    if args.download_user:
+    if args.download_tweets:
         users = Users()
-        download_user_tweets(api, users,  args.download_user)
+        download_user_tweets(api, users,  args.download_tweets)
+
+    if args.download_profile:
+        users = Users()
+        download_profile(api, args.download_profile)
 
     if args.read_user:
         read_user(api, args.read_user)
-
 
 if __name__ == "__main__":
     sys.exit(main())
