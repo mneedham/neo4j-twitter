@@ -4,11 +4,15 @@ import os
 import tweepy
 import csv
 import json
-from collections import  deque
 
+from collections import  deque
 from util import Users
 
 def seed(api, username):
+    if os.path.exists("data/users.csv"):
+        print "Twitter graph has already been seeded. Delete 'data/users.csv' if you want to seed it again"
+        sys.exit(1)
+
     USERS_TO_PROCESS = 50
     users_to_process = deque()
     users_processed = set([username])
@@ -67,6 +71,18 @@ def read_user(api, username):
         for tweet in tweets:
             print tweet["id"], tweet["text"]
 
+def download_all_user_tweets(api, users):
+    unprocessed_users =  [user[0] for user in users.all().iteritems() if not user[1]["lastTweetRetrieved"]]
+    for user in unprocessed_users:
+        download_user_tweets(api, users, user)
+
+def download_all_user_profiles(api, users):
+    unprocessed_users =  [user[0] for user in users.all().iteritems()
+                          if not os.path.exists("data/profiles/{0}.json".format(user[0]))]
+
+    for user in unprocessed_users:
+        download_profile(api, user)
+
 def download_user_tweets(api, users, username):
     print username
     value = users.find(username)
@@ -81,7 +97,6 @@ def download_user_tweets(api, users, username):
     first_tweet_done = False
     since_id = value["lastTweetRetrieved"]
     for tweet in tweepy.Cursor(api.user_timeline, id=username, since_id = since_id).items(50):
-        print tweet.id
         if not first_tweet_done:
             value["lastTweetRetrieved"] = tweet.id
             first_tweet_done = True
@@ -116,10 +131,16 @@ def main(argv=None):
     api = tweepy.API(auth, wait_on_rate_limit = True, wait_on_rate_limit_notify = True)
 
     parser = argparse.ArgumentParser(description='Query the Twitter API')
+
+    # specific user
     parser.add_argument('--seed')
     parser.add_argument('--download-tweets')
     parser.add_argument('--download-profile')
     parser.add_argument('--read-user')
+
+    # all users
+    parser.add_argument('--download-all-tweets', action='store_true')
+    parser.add_argument('--download-all-profiles', action='store_true')
 
     if argv is None:
         argv = sys.argv
@@ -128,17 +149,31 @@ def main(argv=None):
 
     if args.seed:
         seed(api, args.seed)
+        return
 
     if args.download_tweets:
         users = Users()
         download_user_tweets(api, users,  args.download_tweets)
+        return
+
+    if args.download_all_tweets:
+        users = Users()
+        download_all_user_tweets(api, users)
+        return
 
     if args.download_profile:
         users = Users()
         download_profile(api, args.download_profile)
+        return
+
+    if args.download_all_profiles:
+        users = Users()
+        download_all_user_profiles(api, users)
+        return
 
     if args.read_user:
         read_user(api, args.read_user)
+        return
 
 if __name__ == "__main__":
     sys.exit(main())
