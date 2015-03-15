@@ -46,7 +46,7 @@ def seed(api, username):
         for user in users_processed:
             writer.writerow([user, "", ""])
 
-def read_user(api, username):
+def read_user(username):
     print username
     profile_file_path = "data/profiles/{0}.json".format(username)
     if os.path.exists(profile_file_path):
@@ -121,15 +121,6 @@ def download_profile(api, username):
         file.write(json.dumps(profile))
 
 def main(argv=None):
-    consumer_key =  os.environ['CONSUMER_KEY']
-    consumer_secret =  os.environ['CONSUMER_SECRET']
-    access_token =  os.environ['ACCESS_TOKEN']
-    access_token_secret =  os.environ['ACCESS_TOKEN_SECRET']
-
-    auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
-    auth.set_access_token(access_token, access_token_secret)
-    api = tweepy.API(auth, wait_on_rate_limit = True, wait_on_rate_limit_notify = True)
-
     parser = argparse.ArgumentParser(description='Query the Twitter API')
 
     # specific user
@@ -146,6 +137,24 @@ def main(argv=None):
         argv = sys.argv
 
     args = parser.parse_args()
+
+    if args.read_user:
+        read_user(args.read_user)
+        return
+
+    # Options that require keys go below here
+    consumer_key =  os.environ.get('CONSUMER_KEY')
+    consumer_secret =  os.environ.get('CONSUMER_SECRET')
+    access_token =  os.environ.get('ACCESS_TOKEN')
+    access_token_secret =  os.environ.get('ACCESS_TOKEN_SECRET')
+
+    if any([key is None for key in [consumer_key, consumer_secret, access_token, access_token_secret]]):
+        print "One of your twitter keys isn't set - don't forget to 'source credentials.local'"
+        sys.exit(1)
+
+    auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
+    auth.set_access_token(access_token, access_token_secret)
+    api = tweepy.API(auth, wait_on_rate_limit = True, wait_on_rate_limit_notify = True)
 
     if args.seed:
         seed(api, args.seed)
@@ -169,10 +178,6 @@ def main(argv=None):
     if args.download_all_profiles:
         users = Users()
         download_all_user_profiles(api, users)
-        return
-
-    if args.read_user:
-        read_user(api, args.read_user)
         return
 
 if __name__ == "__main__":
