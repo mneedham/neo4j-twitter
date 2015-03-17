@@ -15,6 +15,10 @@ class Users:
     def find(self, username):
         return self.users[username]
 
+    def add(self, user):
+        value = {"lastTweetRetrieved": ""}
+        self.save(user, value)
+
     def save(self, username, value):
         self.users[username] = value
 

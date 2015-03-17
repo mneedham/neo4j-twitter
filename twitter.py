@@ -75,6 +75,11 @@ def read_user(username):
             print tweet["id"], tweet["text"]
 
 def download_all_user_tweets(api, users):
+    unprocessed_users =  [user[0] for user in users.all().iteritems()]
+    for user in unprocessed_users:
+        download_user_tweets(api, users, user)
+
+def download_new_user_tweets(api, users):
     unprocessed_users =  [user[0] for user in users.all().iteritems() if not user[1]["lastTweetRetrieved"]]
     for user in unprocessed_users:
         download_user_tweets(api, users, user)
@@ -185,12 +190,15 @@ def import_tweets_into_neo4j():
                     "createdAt": created_at,
                     "text": tweet["text"],
                     "userId": tweet["user"]["id"],
-                    "userMentions": [user for user in tweet["entities"]["user_mentions"]]
+                    "inReplyToTweetId": tweet["in_reply_to_status_id"],
+                    "userMentions": [user for user in tweet["entities"]["user_mentions"]],
+                    "urls": [url for url in tweet["entities"]["urls"]]
                 }
 
                 statement = """
                             MERGE (tweet:Tweet {id: {tweetId}})
                             SET tweet.text = {text}, tweet.timestamp = {createdAt}
+                            REMOVE tweet:Shadow
                             WITH tweet
                             MATCH (person:Person {twitterId: {userId}})
                             MERGE (person)-[:TWEETED]->(tweet)
@@ -201,10 +209,34 @@ def import_tweets_into_neo4j():
                                 SET mentionedUser.screenName = user.screen_name
                                 MERGE (tweet)-[:MENTIONED_USER]->(mentionedUser)
                             )
+
+                            FOREACH(url in {urls} |
+                                MERGE (u:URL {value: url.expanded_url})
+                                MERGE (tweet)-[:MENTIONED_URL]->(u)
+                            )
+
+                            FOREACH(ignoreMe in CASE WHEN NOT {inReplyToTweetId} is null THEN [1] ELSE [] END |
+                                MERGE (inReplyToTweet:Tweet {id: {inReplyToTweetId}})
+                                ON CREATE SET inReplyToTweet:Shadow
+                                MERGE (tweet)-[:IN_REPLY_TO_TWEET]->(inReplyToTweet)
+                            )
                             """
                 tx.append(statement, params)
                 tx.process()
     tx.commit()
+
+def add_new_users(users, count):
+    graph = Graph()
+    params = {"limit": count}
+    results = graph.cypher.execute("""
+                                  match (p:Shadow:Person)<-[:MENTIONED_USER]-(user)
+                                  RETURN p.screenName AS user, COUNT(*) AS times
+                                  ORDER BY times DESC
+                                  LIMIT {limit}
+                                  """, params)
+    print results
+    for row in results:
+        users.add(row["user"])
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Query the Twitter API')
@@ -215,9 +247,12 @@ def main(argv=None):
     parser.add_argument('--download-profile')
     parser.add_argument('--read-user')
 
+    parser.add_argument('--add-new-users', type=int)
+
     # all users
-    parser.add_argument('--download-all-tweets', action='store_true')
-    parser.add_argument('--download-all-profiles', action='store_true')
+    parser.add_argument('--download-all-user-tweets', action='store_true')
+    parser.add_argument('--download-new-user-tweets', action='store_true')
+    parser.add_argument('--download-all-user-profiles', action='store_true')
 
     # twitter auth
     parser.add_argument('--check-auth', action='store_true')
@@ -276,9 +311,14 @@ def main(argv=None):
         download_user_tweets(api, users,  args.download_tweets)
         return
 
-    if args.download_all_tweets:
+    if args.download_all_user_tweets:
         users = Users()
         download_all_user_tweets(api, users)
+        return
+
+    if args.download_new_user_tweets:
+        users = Users()
+        download_new_user_tweets(api, users)
         return
 
     if args.download_profile:
@@ -286,9 +326,14 @@ def main(argv=None):
         download_profile(api, args.download_profile)
         return
 
-    if args.download_all_profiles:
+    if args.download_all_user_profiles:
         users = Users()
         download_all_user_profiles(api, users)
+        return
+
+    if args.add_new_users:
+        users = Users()
+        add_new_users(users, args.add_new_users)
         return
 
     if args.import_profiles_into_neo4j:
